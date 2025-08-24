@@ -1,7 +1,31 @@
 import pygame
 import pymunk
+import pymunk.pygame_util
 import random
 import time
+
+CATEGORY_1 = 0b001
+CATEGORY_2 = 0b010
+CATEGORY_3 = 0b100
+
+# Create shapes with appropriate filters
+# Object 1: Can collide with categories 2 and 3
+road = pymunk.ShapeFilter(
+    categories=CATEGORY_1,
+    mask=CATEGORY_2 | CATEGORY_3
+)
+
+# Object 2: Can collide with category 1 only
+ball = pymunk.ShapeFilter(
+    categories=CATEGORY_2,           # This object is type 2
+    mask=CATEGORY_1                  # Can collide with type 1 only
+)
+
+# Object 3: Can collide with category 1 only
+support = pymunk.ShapeFilter(
+    categories=CATEGORY_3,           # This object is type 3
+    mask=CATEGORY_1                  # Can collide with type 1 only
+)
 
 class Bridge:
     def __init__(self, nodes, edges, static_nodes):
@@ -26,7 +50,7 @@ class Bridge:
 
         adj = {} # node_id: [node_id1, ...]
 
-        for (a, b), mass in self.edges.items():
+        for (a, b), (mass, is_road) in self.edges.items():
             if a > b:
                 a, b = b, a
 
@@ -47,9 +71,10 @@ class Bridge:
 
             segment = pymunk.Segment(body, a_pos - body.position, b_pos - body.position, radius=5)
             segment.mass = mass
+            segment.filter = road if is_road else support
             self.space.add(segment)
             self.shapes.append(segment)
-        
+
         for a, nbhs in adj.items():
             a_pos = self.nodes[a]
 
@@ -67,7 +92,7 @@ class Bridge:
 
                     b_body = self.bodies[a1, b]
                     c_body = self.bodies[a2, c]
-                    
+
                     joint = pymunk.PivotJoint(b_body, c_body, a_pos)
                     joint.collide_bodies = False
                     self.space.add(joint)
@@ -92,17 +117,6 @@ class Bridge:
             joint.collide_bodies = False
             self.space.add(joint)
             self.joints[a] = joint
-            
-def draw_bridge(screen, bridge):
-    screen.fill((255, 255, 255))
-
-    for segment in bridge.shapes:
-        body = segment.body
-        p1 = body.position + segment.a.rotated(body.angle)
-        p2 = body.position + segment.b.rotated(body.angle)
-        pygame.draw.line(screen, (0, 0, 0), p1, p2, 5)
-        pygame.draw.circle(screen, (255, 0, 0), p1, 7.5)
-        pygame.draw.circle(screen, (255, 0, 0), p2, 7.5)
 
 def cross_nodes(a_nodes, b_nodes):
     nodes = {}
@@ -122,6 +136,42 @@ def cross_nodes(a_nodes, b_nodes):
 
     return nodes
 
+def constant_horizontal_velocity(body, gravity, damping, dt):
+    """Custom velocity function to maintain constant horizontal speed"""
+    target_horizontal_velocity = 100
+    pymunk.Body.update_velocity(body, gravity, damping, dt)
+    body.velocity = (target_horizontal_velocity, body.velocity.y)
+
+def get_fitness(bridge, start_pos, end_x, screen=None, draw_options=None, clock=None):
+    tps = 60
+    dt = 1 / tps
+
+    body = pymunk.Body(mass=10, moment=10)
+    body.position = start_pos
+    body.velocity_func = constant_horizontal_velocity
+    shape = pymunk.Circle(body, 20)
+    shape.filter = ball
+    bridge.space.add(body, shape)
+
+    max_tension = 0
+
+    while body.position.x <= end_x:
+        bridge.space.step(dt)
+
+        for joint in bridge.joints.values():
+            tension = joint.impulse * tps
+            max_tension = max(max_tension, tension)
+
+        if screen is None or draw_options is None or clock is None:
+            continue
+
+        screen.fill("white")
+        bridge.space.debug_draw(draw_options)
+        pygame.display.update()
+        clock.tick(tps)
+
+    return max_tension
+
 def main():
     pygame.init()
 
@@ -129,6 +179,7 @@ def main():
     screen = pygame.display.set_mode((width, height))
     pygame.display.set_caption("Pymunk Bridge Graph with Pygame")
 
+    draw_options = pymunk.pygame_util.DrawOptions(screen)
     clock = pygame.time.Clock()
 
     a_nodes = {
@@ -150,11 +201,11 @@ def main():
     }
 
     edges = {
-        (1, 2): 10,
-        (2, 3): 10,
-        (3, 4): 10,
-        (1, 5): 10,
-        (5, 6): 10,
+        (1, 2): (10, True),
+        (2, 3): (10, True),
+        (3, 4): (10, False),
+        (1, 5): (10, False),
+        (5, 6): (10, False),
     }
 
     static_nodes = {1, 3}
@@ -162,25 +213,7 @@ def main():
     random.seed(time.time())
     child = Bridge(cross_nodes(a_nodes, b_nodes), edges, static_nodes)
 
-    prev_time = int(time.time())
-
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
-        child.space.step(1 / 60.0)
-
-        draw_bridge(screen, child)
-
-        cur_time = int(time.time())
-        if cur_time > prev_time:
-            child = Bridge(cross_nodes(a_nodes, b_nodes), edges, static_nodes)
-            prev_time = cur_time
-
-        pygame.display.flip()
-        clock.tick(60)
+    print(get_fitness(child, (100, 180), 400, screen, draw_options, clock))
 
     pygame.quit()
 
