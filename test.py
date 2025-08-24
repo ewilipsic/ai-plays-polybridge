@@ -10,8 +10,8 @@ class Bridge:
         static_nodes: list or set - node ids that are static with respect to world
         """
         self.space = space
-        space.damping = 0.3
-        space.iterations = 30000
+        space.damping = 0.5
+        space.iterations = 500
 
         self.nodes = nodes
         self.edges = edges
@@ -66,6 +66,7 @@ class Bridge:
                     c_body = self.bodies[a2, c]
                     
                     joint = pymunk.PivotJoint(b_body, c_body, a_pos)
+                    joint.collide_bodies = False
                     self.space.add(joint)
                     self.joints[a] = joint
 
@@ -85,6 +86,7 @@ class Bridge:
             self.space.add(body)
 
             joint = pymunk.PivotJoint(body, self.bodies[a, b], body.position)
+            joint.collide_bodies = False
             self.space.add(joint)
             self.joints[a] = joint
             
@@ -96,13 +98,6 @@ def draw_bridge(screen, bridge):
         p1 = body.position + segment.a.rotated(body.angle)
         p2 = body.position + segment.b.rotated(body.angle)
         pygame.draw.line(screen, (0, 0, 0), p1, p2, 5)
-
-    for id, pos in bridge.nodes.items():
-        if id in bridge.static_nodes:
-            color = (255, 0, 0)
-        else:
-            color = (0, 255, 0)
-        pygame.draw.circle(screen, color, pos, 7.5)
 
 def main():
     pygame.init()
@@ -121,14 +116,14 @@ def main():
         2: pymunk.Vec2d(200, 200),
         3: pymunk.Vec2d(300, 200),
         4: pymunk.Vec2d(400, 200),
-        #5: pymunk.Vec2d(150, 300),
+        5: pymunk.Vec2d(150, 300),
     }
 
     edges = {
         (1, 2): 10,
         (2, 3): 10,
         (3, 4): 10,
-        #(1, 5): 10,
+        (1, 5): 10,
     }
 
     static_nodes = {1, 4}
