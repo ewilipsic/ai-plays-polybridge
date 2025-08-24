@@ -1,17 +1,20 @@
 import pygame
 import pymunk
+import random
+import time
 
 class Bridge:
-    def __init__(self, space, nodes, edges, static_nodes):
+    def __init__(self, nodes, edges, static_nodes):
         """
         space: pymunk.Space - the physics space
         nodes: dict - {node_id: (x, y)} coordinates of nodes
         edges: list - {(node_a, node_b): mass} edges by node ids with mass
         static_nodes: list or set - node ids that are static with respect to world
         """
-        self.space = space
-        space.damping = 0.5
-        space.iterations = 500
+        self.space = pymunk.Space()
+        self.space.gravity = (0, 900)
+        self.space.damping = 0.5
+        self.space.iterations = 500
 
         self.nodes = nodes
         self.edges = edges
@@ -98,6 +101,26 @@ def draw_bridge(screen, bridge):
         p1 = body.position + segment.a.rotated(body.angle)
         p2 = body.position + segment.b.rotated(body.angle)
         pygame.draw.line(screen, (0, 0, 0), p1, p2, 5)
+        pygame.draw.circle(screen, (255, 0, 0), p1, 7.5)
+        pygame.draw.circle(screen, (255, 0, 0), p2, 7.5)
+
+def cross_nodes(a_nodes, b_nodes):
+    nodes = {}
+    for n, pos1 in a_nodes.items():
+        min_dist = float('inf')
+        close_pos2 = None
+        for pos2 in b_nodes.values():
+            dist = (pos2 - pos1).length
+            if dist < min_dist:
+                close_pos2 = pos2
+                min_dist = dist
+
+        if random.random() < 0.5:
+            nodes[n] = close_pos2
+        else:
+            nodes[n] = pos1
+
+    return nodes
 
 def main():
     pygame.init()
@@ -107,16 +130,23 @@ def main():
     pygame.display.set_caption("Pymunk Bridge Graph with Pygame")
 
     clock = pygame.time.Clock()
-    space = pymunk.Space()
-    space.gravity = (0, 900)  # Gravity pulling down
 
-    # Define nodes and edges
-    nodes = {
+    a_nodes = {
         1: pymunk.Vec2d(100, 200),
         2: pymunk.Vec2d(200, 200),
         3: pymunk.Vec2d(300, 200),
         4: pymunk.Vec2d(400, 200),
         5: pymunk.Vec2d(150, 300),
+        6: pymunk.Vec2d(200, 250),
+    }
+
+    b_nodes = {
+        1: pymunk.Vec2d(120, 210),
+        2: pymunk.Vec2d(230, 220),
+        3: pymunk.Vec2d(340, 210),
+        4: pymunk.Vec2d(420, 210),
+        5: pymunk.Vec2d(150, 320),
+        6: pymunk.Vec2d(250, 250),
     }
 
     edges = {
@@ -124,11 +154,15 @@ def main():
         (2, 3): 10,
         (3, 4): 10,
         (1, 5): 10,
+        (5, 6): 10,
     }
 
-    static_nodes = {1, 4}
+    static_nodes = {1, 3}
 
-    bridge = Bridge(space, nodes, edges, static_nodes)
+    random.seed(time.time())
+    child = Bridge(cross_nodes(a_nodes, b_nodes), edges, static_nodes)
+
+    prev_time = int(time.time())
 
     running = True
     while running:
@@ -136,9 +170,14 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
-        space.step(1 / 60.0)
+        child.space.step(1 / 60.0)
 
-        draw_bridge(screen, bridge)
+        draw_bridge(screen, child)
+
+        cur_time = int(time.time())
+        if cur_time > prev_time:
+            child = Bridge(cross_nodes(a_nodes, b_nodes), edges, static_nodes)
+            prev_time = cur_time
 
         pygame.display.flip()
         clock.tick(60)
