@@ -1,0 +1,5 @@
+{
+    "venvPath": "/home/tejas/dev/test",
+    "venv": ".venv",
+    "exclude": [".venv"]
+}
