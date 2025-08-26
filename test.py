@@ -28,11 +28,10 @@ support = pymunk.ShapeFilter(
 )
 
 class Bridge:
-    def __init__(self, nodes, edges, static_nodes):
+    def __init__(self, nodes, static_nodes, edges):
         """
-        space: pymunk.Space - the physics space
         nodes: dict - {node_id: (x, y)} coordinates of nodes
-        edges: list - {(node_a, node_b): mass} edges by node ids with mass
+        edges: list - {(a_node_id, b_node_id): mass} edges by node ids with mass
         static_nodes: list or set - node ids that are static with respect to world
         """
         self.space = pymunk.Space()
@@ -41,25 +40,23 @@ class Bridge:
         self.space.iterations = 500
 
         self.nodes = nodes
-        self.edges = edges
         self.static_nodes = static_nodes
+        self.edges = edges
 
-        self.bodies = {}
-        self.shapes = []
-        self.joints = {}
-
-        adj = {} # node_id: [node_id1, ...]
+        self.adj = {} # a_node_id: [b_node_id, ...]
+        self.seg_bodies = {} # (a_node_id, b_node_id): body
+        self.joints = []
 
         for (a, b), (mass, is_road) in self.edges.items():
             if a > b:
                 a, b = b, a
 
-            if a not in adj.keys():
-                adj[a] = []
-            if b not in adj.keys():
-                adj[b] = []
-            adj[a].append(b)
-            adj[b].append(a)
+            if a not in self.adj.keys():
+                self.adj[a] = []
+            if b not in self.adj.keys():
+                self.adj[b] = []
+            self.adj[a].append(b)
+            self.adj[b].append(a)
 
             a_pos = self.nodes[a]
             b_pos = self.nodes[b]
@@ -67,15 +64,14 @@ class Bridge:
             body = pymunk.Body()
             body.position = (a_pos + b_pos) / 2
             self.space.add(body)
-            self.bodies[a, b] = body
+            self.seg_bodies[a, b] = body
 
             segment = pymunk.Segment(body, a_pos - body.position, b_pos - body.position, radius=5)
             segment.mass = mass
             segment.filter = road if is_road else support
             self.space.add(segment)
-            self.shapes.append(segment)
 
-        for a, nbhs in adj.items():
+        for a, nbhs in self.adj.items():
             a_pos = self.nodes[a]
 
             for i in range(len(nbhs)):
@@ -90,13 +86,13 @@ class Bridge:
                     if a2 > c:
                         a2, c = c, a2
 
-                    b_body = self.bodies[a1, b]
-                    c_body = self.bodies[a2, c]
+                    b_body = self.seg_bodies[a1, b]
+                    c_body = self.seg_bodies[a2, c]
 
                     joint = pymunk.PivotJoint(b_body, c_body, a_pos)
                     joint.collide_bodies = False
                     self.space.add(joint)
-                    self.joints[a] = joint
+                    self.joints.append(joint)
 
         for a, b in self.edges:
             if a in self.static_nodes:
@@ -113,14 +109,24 @@ class Bridge:
             body.position = self.nodes[stat]
             self.space.add(body)
 
-            joint = pymunk.PivotJoint(body, self.bodies[a, b], body.position)
+            joint = pymunk.PivotJoint(body, self.seg_bodies[a, b], body.position)
             joint.collide_bodies = False
             self.space.add(joint)
-            self.joints[a] = joint
+            self.joints.append(joint)
 
-def cross_nodes(a_nodes, b_nodes):
+def mutate(bridge):
+    nodes = bridge.nodes
+    edges = bridge.edges
+
+    return Bridge(nodes, bridge.static_nodes, edges)
+
+def cross_nodes(a_nodes, b_nodes, a_static_nodes):
     nodes = {}
     for n, pos1 in a_nodes.items():
+        if n in a_static_nodes or random.random() > 0.5: # prob of gene cross
+            nodes[n] = pos1
+            continue
+
         min_dist = float('inf')
         close_pos2 = None
         for pos2 in b_nodes.values():
@@ -129,10 +135,7 @@ def cross_nodes(a_nodes, b_nodes):
                 close_pos2 = pos2
                 min_dist = dist
 
-        if random.random() < 0.5:
-            nodes[n] = close_pos2
-        else:
-            nodes[n] = pos1
+        nodes[n] = close_pos2
 
     return nodes
 
@@ -142,7 +145,7 @@ def constant_horizontal_velocity(body, gravity, damping, dt):
     pymunk.Body.update_velocity(body, gravity, damping, dt)
     body.velocity = (target_horizontal_velocity, body.velocity.y)
 
-def get_fitness(bridge, start_pos, end_x, screen=None, draw_options=None, clock=None):
+def comp_max_tension(bridge, start_pos, end_x, screen=None, draw_options=None, clock=None):
     tps = 60
     dt = 1 / tps
 
@@ -158,16 +161,20 @@ def get_fitness(bridge, start_pos, end_x, screen=None, draw_options=None, clock=
     while body.position.x <= end_x:
         bridge.space.step(dt)
 
-        for joint in bridge.joints.values():
+        for joint in bridge.joints:
             tension = joint.impulse * tps
             max_tension = max(max_tension, tension)
 
-        if screen is None or draw_options is None or clock is None:
+        if screen is None or draw_options is None:
             continue
 
         screen.fill("white")
         bridge.space.debug_draw(draw_options)
         pygame.display.update()
+
+        if clock is None:
+            continue
+
         clock.tick(tps)
 
     return max_tension
@@ -182,38 +189,81 @@ def main():
     draw_options = pymunk.pygame_util.DrawOptions(screen)
     clock = pygame.time.Clock()
 
+    random.seed(time.time())
+
     a_nodes = {
         1: pymunk.Vec2d(100, 200),
         2: pymunk.Vec2d(200, 200),
         3: pymunk.Vec2d(300, 200),
         4: pymunk.Vec2d(400, 200),
-        5: pymunk.Vec2d(150, 300),
-        6: pymunk.Vec2d(200, 250),
+        5: pymunk.Vec2d(150, 100),
+        6: pymunk.Vec2d(250, 100),
+        7: pymunk.Vec2d(350, 100),   
+    }
+
+    a_static_nodes = {1, 7}
+    
+    a_edges = {
+        (1, 2): (10, True),
+        (2, 3): (10, True),
+        (3, 4): (10, True),
+                     
+        (1, 5): (10, False),
+        (2, 5): (10, False),
+        (2, 6): (10, False),
+        (3, 6): (10, False),
+        (3, 7): (10, False),
+        (4, 7): (10, False),
+
+        (5, 6): (10, False),
+        (6, 7): (10, False),
     }
 
     b_nodes = {
-        1: pymunk.Vec2d(120, 210),
-        2: pymunk.Vec2d(230, 220),
-        3: pymunk.Vec2d(340, 210),
-        4: pymunk.Vec2d(420, 210),
-        5: pymunk.Vec2d(150, 320),
-        6: pymunk.Vec2d(250, 250),
+        1: pymunk.Vec2d(100, 200),
+        2: pymunk.Vec2d(220, 200),
+        3: pymunk.Vec2d(290, 200),
+        4: pymunk.Vec2d(410, 200),
+        5: pymunk.Vec2d(490, 200),
+        6: pymunk.Vec2d(600, 200),
     }
 
-    edges = {
+    b_static_nodes = {1, 6}
+
+    b_edges = {
         (1, 2): (10, True),
         (2, 3): (10, True),
-        (3, 4): (10, False),
-        (1, 5): (10, False),
-        (5, 6): (10, False),
+        (3, 4): (10, True),
+        (4, 5): (10, True),
+        (5, 6): (10, True),
     }
 
-    static_nodes = {1, 3}
+    population = [
+        Bridge(a_nodes, a_static_nodes, a_edges),
+        Bridge(b_nodes, b_static_nodes, b_edges),
+    ]
 
-    random.seed(time.time())
-    child = Bridge(cross_nodes(a_nodes, b_nodes), edges, static_nodes)
+    tens = [] # tension, bridge from population
 
-    print(get_fitness(child, (100, 180), 400, screen, draw_options, clock))
+    for gen in range(1, 1 + 100):
+        for bridge in population:
+            #tens.append((comp_max_tension(bridge, (100, 180), 600, screen, draw_options, clock), bridge))
+            tens.append((comp_max_tension(bridge, (100, 180), 600, screen, draw_options, None), bridge))
+
+        tens.sort(key=lambda pair: pair[0])
+
+        max_pop_size = 5
+        if len(tens) > max_pop_size:
+            tens = tens[:max_pop_size]
+
+        population = []
+        for i in range(len(tens)):
+            for j in range(i + 1, len(tens)):
+                a_bridge = tens[i][1]
+                b_bridge = tens[j][1]
+                population.append(Bridge(cross_nodes(a_bridge.nodes, b_bridge.nodes, a_bridge.static_nodes), a_bridge.static_nodes, a_bridge.edges))
+
+        print(f'[{gen}]\tmin_tens: {tens[0][0]}')
 
     pygame.quit()
 
